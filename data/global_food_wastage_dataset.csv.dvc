@@ -1,0 +1,5 @@
+outs:
+- md5: 702cb1358ccd3b62ec2835cf3aa54082
+  size: 320330
+  hash: md5
+  path: global_food_wastage_dataset.csv
