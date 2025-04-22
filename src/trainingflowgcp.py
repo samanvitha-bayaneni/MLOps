@@ -33,57 +33,29 @@ class TrainingFlow(FlowSpec):
     @retry(times=2)
     @step
     def start(self):
-        logging.basicConfig(level=logging.INFO)
-        logging.info("Loading model and preprocessing artifacts...")
+        logging.getLogger("mlflow").setLevel(logging.WARNING)
 
-        mlflow.set_tracking_uri("https://mlflow-run-1043603561525.us-west2.run.app/")
-        self.model = mlflow.sklearn.load_model(f"models:/food_waste_model/latest")
+        raw_df = pd.read_csv("gs://storage-tryagain9-metaflow-default/global_food_wastage_dataset.csv")
+        self.df = preprocess_data(raw_df)
 
-        try:
-            fs = gcsfs.GCSFileSystem()
-            
-            # Check if files exist before loading
-            path_feature_cols = "gs://storage-tryagain9-metaflow-default/feature_columns.pkl"
-            path_scaler = "gs://storage-tryagain9-metaflow-default/scaler.pkl"
-            
-            if not fs.exists(path_feature_cols):
-                raise FileNotFoundError(f"Feature columns file not found at {path_feature_cols}")
-            
-            if not fs.exists(path_scaler):
-                raise FileNotFoundError(f"Scaler file not found at {path_scaler}")
-                
-            # Log file sizes
-            feature_size = fs.info(path_feature_cols)['size']
-            scaler_size = fs.info(path_scaler)['size']
-            logging.info(f"Feature columns file size: {feature_size} bytes")
-            logging.info(f"Scaler file size: {scaler_size} bytes")
-            
-            if feature_size == 0 or scaler_size == 0:
-                raise ValueError("One or more preprocessing artifacts are empty files")
-            
-            # Use a try/except block for each file separately
-            try:
-                with fs.open(path_feature_cols, 'rb') as f:
-                    self.feature_columns = pickle.load(f)
-                logging.info(f"Successfully loaded feature columns: {len(self.feature_columns)} features")
-            except Exception as e:
-                logging.error(f"Error loading feature columns: {str(e)}")
-                raise
-                
-            try:
-                with fs.open(path_scaler, 'rb') as f:
-                    self.scaler = pickle.load(f)
-                logging.info("Successfully loaded scaler")
-            except Exception as e:
-                logging.error(f"Error loading scaler: {str(e)}")
-                raise
-                
-        except Exception as e:
-            logging.error(f"Error accessing preprocessing artifacts: {e}")
-            raise
+        numeric_cols = self.df.select_dtypes(include=['int64', 'float64']).columns.tolist()
+        self.df, self.scaler = normalize_features(self.df, numeric_cols)
+        self.feature_columns = get_feature_columns(self.df)
 
-        self.raw_df = pd.DataFrame([self.input_data])
-        self.next(self.preprocess)
+        fs = gcsfs.GCSFileSystem()
+        with fs.open("gs://storage-tryagain9-metaflow-default/feature_columns.pkl", 'wb') as f:
+            pickle.dump(self.feature_columns, f)
+        with fs.open("gs://storage-tryagain9-metaflow-default/scaler.pkl", 'wb') as f:
+            pickle.dump(self.scaler, f)
+
+        X = self.df.drop(columns=['Economic Loss (Million $)'])
+        y = self.df['Economic Loss (Million $)']
+        self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(
+            X, y, test_size=self.test_size, random_state=self.random_state
+        )
+
+        self.model_types = ['rf', 'svr']
+        self.next(self.train_model, foreach='model_types')
 
     @kubernetes(cpu=4, memory=8192)
     @timeout(seconds=600)
