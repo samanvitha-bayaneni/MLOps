@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: reddit-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: reddit
+  template:
+    metadata:
+      labels:
+        app: reddit
+    spec:
+      imagePullSecrets:
+      - name: gcr-secret
+      containers:
+      - name: reddit-container
+        image: us-west2-docker.pkg.dev/lab9-deployment/deployment-repo/reddit-app@sha256:affcd57b901571dfa93855468399f202f63788bf798060e0a19d82db379411cd
+        ports:
+        - containerPort: 8000
+        imagePullPolicy: Always
